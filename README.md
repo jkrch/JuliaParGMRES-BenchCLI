@@ -1,6 +1,6 @@
 # Julia Parallel GMRES Benchmark CLI
 
-This repository provides an command line interface to run benchmarks for multithreaded GMRES (and SpMV) in `Julia`.
+This repository provides a command line interface to run benchmarks for multithreaded GMRES (and SpMV) in `Julia`.
 
 ## Install
 
@@ -31,7 +31,7 @@ foo@bar:~/repo/path/JuliaParGMRES-BenchCLI/src$ runbench -h
 
 ## Benchmarks
 
-Check out (the [`JuliaParGMRES-Plots`](https://github.com/jkrch/JuliaParGMRES-Plots) for benchmarks.
+Check out [`JuliaParGMRES-Plots`](https://github.com/jkrch/JuliaParGMRES-Plots) for benchmarks.
 
 
 
