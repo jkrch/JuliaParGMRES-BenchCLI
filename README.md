@@ -10,7 +10,7 @@ Switch to a folder on your machine where you want to download `JuliaParGMRES-Ben
 foo@bar:~$ cd repo/path
 ```
 
-Clone the repository to your the  machine:
+Clone the repository to your machine:
 
 ```console
 foo@bar:~/repo/path$ git clone https://github.com/jkrch/JuliaParGMRES-BenchCLI
