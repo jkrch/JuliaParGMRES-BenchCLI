@@ -1,0 +1,51 @@
+#!/bin/bash
+
+#######################################
+# Checks if an array contains a string.
+# Globals:
+#   None
+# Arguments:
+#   array
+#   string
+# Outputs:
+#   Returns 1 if string is in array, 0 if not.
+#######################################
+function contains() {
+    local n=$#
+    local value=${!n}
+    for ((i=1;i < $#;i++)) {
+        if [ "${!i}" == "${value}" ]; then
+            echo "y"
+            return 0
+        fi
+    }
+    echo "n"
+    return 1
+}
+
+#######################################
+# Create folder for benchmark results
+# Globals:
+#   solver
+#	bench
+# Arguments:
+#   None
+# Outputs:
+#   None
+#######################################
+function create_benchfolder() {
+	# Check if benchmark folder exists and if not create
+	folder="../benchmark/"
+	if [ ! -d "$folder" ]; then
+		mkdir -p $folder
+	fi
+	# Create subfolder for the actual benchmark
+	h=$(hostname)
+	d=$(date +%Y-%m-%d)
+	t=$(date +%H-%M-%S)
+	header="${h}__${d}__${t}"
+	echo $header
+	folder="../benchmark/${solver}/${bench}/${header}"
+	mkdir -p $folder
+	mkdir -p ${folder}/csv
+}

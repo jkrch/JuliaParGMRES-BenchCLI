@@ -1,0 +1,144 @@
+#!/bin/bash
+#
+# Benchmark multithreaded dot in Julia
+
+
+# Helper methods
+source utils/utils
+
+
+# Julia links and plot backend (gr if empty)
+julia=$(sed -n "1p" "config.txt")
+julia_mkl=$(sed -n "2p" "config.txt")
+plotbackend=$(sed -n "3p" "config.txt")
+if [ -z "$plotbackend" ]; then
+	plotbackend=gr
+fi
+
+
+# Command line arguments 
+solver=$1
+bench=$2
+size=$3
+kernels=$4
+nthreads=$5
+nsamples=$6
+
+
+# Create folder for benchmark results
+create_benchfolder
+
+
+# Write benchmark properties to log file
+echo "solver =" $solver >> ${folder}/info.txt
+echo "bench =" $bench >> ${folder}/info.txt
+echo "size =" $size >> ${folder}/info.txt
+echo "kernels =" $kernels >> ${folder}/info.txt
+echo "nthreads =" $nthreads >> ${folder}/info.txt
+echo "nsamples =" $nsamples >> ${folder}/info.txt
+
+
+# Convert argument strings to arrays
+IFS=' ' read -ra kernels <<< $kernels
+IFS=' ' read -ra size <<< $size
+IFS=' ' read -ra nthreads <<< $nthreads
+
+
+# Convert number of processor keywords
+if [ "${nthreads[1]}" == "max_logical" ]; then
+	nthreads[1]=$(grep -c ^processor /proc/cpuinfo)
+elif [ "${nthreads[1]}" == "max_physical" ]; then
+	nthreads[1]=$(grep ^cpu\\scores /proc/cpuinfo | uniq |  awk '{print $4}')
+fi
+
+
+# Benchmarks
+
+# Number of threads
+if [ $bench == "nthreads" ]; then
+
+	# OpenBLAS
+	if [ $(contains "${kernels[@]}" "open") == "y" ]; then
+		echo "OpenBLAS dot"
+		printf "nthreads = "
+		csv="${folder}/csv/runtimes_open.csv"
+		echo "nthreads size min med mean max" >> $csv
+		export MKL_NUM_THREADS=1
+		if [ "${nthreads[0]}" -ne "1" ]; then
+			t=1
+			export OMP_NUM_THREADS=$t
+			export JULIA_NUM_THREADS=$t
+			printf "%d.." $t
+			$julia bench_vec.jl $csv $solver $bench ${size[0]} $t
+		fi
+		for ((t=${nthreads[0]}; t<=${nthreads[1]}; t+=${nthreads[2]})); do
+			export OMP_NUM_THREADS=$t
+			export JULIA_NUM_THREADS=$t
+			printf "%d.." $t
+			$julia bench_vec.jl $csv $solver $bench ${size[0]} $t
+		done
+		echo
+	fi
+
+	# MKL
+	if [ $(contains "${kernels[@]}" "mkl") == "y" ]; then
+		echo "MKL.jl dot"
+		printf "nthreads = "
+		csv="${folder}/csv/runtimes_mkl.csv"
+		echo "nthreads size min med mean max" >> $csv
+		export JULIA_NUM_THREADS=1
+		if [ "${nthreads[0]}" -ne "1" ]; then
+			t=1
+			export OMP_NUM_THREADS=$t
+			export MKL_NUM_THREADS=$t
+			printf "%d.." $t
+			$julia_mkl bench_vec.jl $csv $solver $bench ${size[0]} $t
+		fi
+		for ((t=${nthreads[0]}; t<=${nthreads[1]}; t+=${nthreads[2]})); do
+			export OMP_NUM_THREADS=$t
+			export MKL_NUM_THREADS=$t
+			printf "%d.." $t
+			$julia_mkl bench_vec.jl $csv $solver $bench ${size[0]} $t
+		done
+		echo
+	fi
+
+# Vector size
+elif [ $bench == "size" ]; then
+
+	# OpenBLAS
+	if [ $(contains "${kernels[@]}" "open") == "y" ]; then
+		export MKL_NUM_THREADS=1
+		for t in "${nthreads[@]}"; do
+			export JULIA_NUM_THREADS=$t
+			export OMP_NUM_THREADS=$t
+			echo "OpenBLAS $solver, $t thread(s)"
+			csv="${folder}/runtimes_open_${t}.csv"
+			$julia bench_vec.jl $csv $solver $bench ${size[0]} ${size[1]} ${size[2]} $t
+		done
+	fi
+
+	# MKL
+	if [ $(contains "${kernels[@]}" "mkl") == "y" ]; then
+		export JULIA_NUM_THREADS=1
+		for t in "${nthreads[@]}"; do
+			export OMP_NUM_THREADS=$t
+			export MKL_NUM_THREADS=$t
+			echo "MKL.jl $solver, $t thread(s)"
+			csv="${folder}/runtimes_mkl_${t}.csv"
+			$julia_mkl bench_vec.jl $csv $solver $bench ${size[0]} ${size[1]} ${size[2]} $t
+		done
+	fi
+
+fi
+
+
+# Compute gflops and parallel speedups
+printf "Postprocessing.."
+$julia post.jl $folder
+echo
+
+# Plot results
+printf "Plotting.."
+$julia plot.jl $folder $plotbackend
+echo

@@ -1,0 +1,135 @@
+#!/bin/bash
+#
+# Benchmark multithreaded spmv in Julia
+
+
+# Helper methods
+source utils/utils
+
+
+# Julia links and plot backend (gr if empty)
+julia=$(sed -n "1p" "config.txt")
+plotbackend=$(sed -n "3p" "config.txt")
+if [ -z "$plotbackend" ]; then
+	plotbackend=gr
+fi
+
+
+# Command line arguments
+solver=spmv
+bench=$1
+matrix=$2
+size=$3
+kernels=$4
+formats=$5
+nthreads=$6
+nsamples=$7
+
+
+# Create folder for benchmark results
+create_benchfolder
+
+
+# Write benchmark properties to log file
+echo "solver =" $solver >> ${folder}/info.txt
+echo "bench =" $bench >> ${folder}/info.txt
+echo "matrix =" $matrix >> ${folder}/info.txt
+echo "size =" $size >> ${folder}/info.txt
+echo "kernels =" $kernels >> ${folder}/info.txt
+echo "formats =" $formats >> ${folder}/info.txt
+echo "nthreads =" $nthreads >> ${folder}/info.txt
+echo "nsamples =" $nsamples >> ${folder}/info.txt
+
+
+# Convert argument strings to arrays
+IFS=' ' read -ra size <<< $size
+IFS=' ' read -ra formats <<< $formats
+IFS=' ' read -ra kernels <<< $kernels
+IFS=' ' read -ra nthreads <<< $nthreads
+
+
+# Convert number of processor keywords
+if [ "${nthreads[1]}" == "max_logical" ]; then
+	nthreads[1]=$(grep -c ^processor /proc/cpuinfo)
+elif [ "${nthreads[1]}" == "max_physical" ]; then
+	nthreads[1]=$(grep ^cpu\\scores /proc/cpuinfo | uniq |  awk '{print $4}')
+fi
+
+
+# Benchmarks
+
+# Set number of threads
+function set_nthreads(){
+	export JULIA_NUM_THREADS=$t
+	export OMP_NUM_THREADS=$t
+}
+
+# Run benchmarks
+function run_benchmarks(){
+	if [ $bench == "nthreads" ]; then
+		$julia bench_spmv.jl $csv $bench $matrix ${size[0]} $kernel $format $t \
+			$nsamples
+	elif [ $bench == "size" ]; then
+		$julia bench_spmv.jl $csv $bench $matrix ${size[0]} ${size[1]} ${size[2]} \
+			${size[3]} $kernel $format $t $nsamples
+	fi
+}
+
+# Number of threads
+if [ $bench == "nthreads" ]; then
+	for kernel in "${kernels[@]}"; do
+		for format in "${formats[@]}"; do
+			if [ $kernel == "par" ] && [ $format == "csc" ]; then
+				break
+			fi
+			echo "${kernel}, ${format}"
+			csv="${folder}/csv/runtimes_${kernel}_${format}.csv"
+			echo "nthreads nrows ncols nnz min med mean max" >> $csv
+			printf "nthreads = "
+			if [ $kernel == "ser" ]; then
+				t=1
+				set_nthreads
+				run_benchmarks
+			else
+				for ((t=${nthreads[0]} ; t<=${nthreads[1]} ; t+=${nthreads[2]})); do
+					set_nthreads
+					run_benchmarks
+				done
+			fi
+			echo
+		done
+	done
+# Matrix size
+elif [ $bench == "size" ]; then
+	for kernel in "${kernels[@]}"; do
+		if [ $kernel == "ser" ]; then
+			for format in "${formats[@]}"; do
+				t=1
+				echo "${kernel}, ${format}, ${t}"
+				csv="${folder}/csv/runtimes_${kernel}_${format}_${t}.csv"
+				set_nthreads
+				run_benchmarks
+			done
+		else
+			for format in "${formats[@]}"; do
+				for t in "${nthreads[@]}"; do
+					echo "${kernel}, ${format}, ${t}"
+					csv="${folder}/csv/runtimes_${kernel}_${format}_${t}.csv"
+					set_nthreads
+					run_benchmarks
+				done
+			done
+		fi
+	done
+fi
+
+
+# Compute gflops and parallel speedups
+printf "Postprocessing.."
+$julia post.jl $folder
+echo
+
+# Plot results
+printf "Plotting.."
+$julia plot.jl $folder $plotbackend
+echo

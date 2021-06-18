@@ -1,0 +1,260 @@
+#!/bin/bash
+#
+# Benchmark multithreaded iterative methods in Julia
+
+
+# Helper methods
+source utils/utils
+
+
+# Julia links and plot backend (gr if empty)
+julia_open=$(sed -n "1p" "config.txt")
+julia_mkl=$(sed -n "2p" "config.txt")
+plotbackend=$(sed -n "3p" "config.txt")
+if [ -z "$plotbackend" ]; then
+	plotbackend=gr
+fi
+
+
+# Command line arguments 
+solver=gmres
+bench=$1
+matrix=$2
+size=$3
+kernels=$4
+formats=$5
+orths=$6
+precons=$7
+nthreads=$8
+nsamples=$9
+niter=${10:-default}
+small_tol=${11:-false} # if true then sets the conv tol extremely small
+omp_serial=${12:-false} # if true then is OMP_NUM_THREADS always 1
+ser_threads=${13:-false} # if true then runs the ser kernel for all threads 
+count_flops=${14:-false} # if true then flops are counted
+
+
+# Create folder for benchmark results
+create_benchfolder
+
+
+# Write benchmark properties to info file
+echo "solver =" $solver >> ${folder}/info.txt
+echo "bench =" $bench >> ${folder}/info.txt
+echo "matrix =" $matrix >> ${folder}/info.txt
+echo "size =" $size >> ${folder}/info.txt
+echo "kernels =" $kernels >> ${folder}/info.txt
+echo "formats =" $formats >> ${folder}/info.txt
+echo "orths =" $orths >> ${folder}/info.txt
+echo "precons =" $precons >> ${folder}/info.txt
+echo "nthreads =" $nthreads >> ${folder}/info.txt
+echo "nsamples =" $nsamples >> ${folder}/info.txt
+echo "niter =" $niter >> ${folder}/info.txt
+echo "small_tol =" $small_tol >> ${folder}/info.txt
+echo "omp_serial =" $omp_serial >> ${folder}/info.txt
+echo "ser_threads =" $ser_threads >> ${folder}/info.txt
+echo "count_flops =" $count_flops >> ${folder}/info.txt
+
+
+# Convert strings to arrays
+IFS=' ' read -ra matrix <<< $matrix
+IFS=' ' read -ra kernels <<< $kernels
+IFS=' ' read -ra formats <<< $formats
+IFS=' ' read -ra size <<< $size
+IFS=' ' read -ra orths <<< $orths
+IFS=' ' read -ra precons <<< $precons
+IFS=' ' read -ra nthreads <<< $nthreads
+
+
+# Convert number of processor keywords
+if [ "${nthreads[1]}" == "max_logical" ]; then
+	nthreads[1]=$(grep -c ^processor /proc/cpuinfo)
+elif [ "${nthreads[1]}" == "max_physical" ]; then
+	nthreads[1]=$(grep ^cpu\\scores /proc/cpuinfo | uniq |  awk '{print $4}')
+fi
+
+
+# Benchmarks
+
+# Set number of threads
+function set_nthreads(){
+	export JULIA_NUM_THREADS=$t
+	if [ $omp_serial == "false" ]; then 
+		export OMP_NUM_THREADS=$t
+	else
+		export OMP_NUM_THREADS=1
+	fi
+}
+
+# Run benchmarks
+function run_benchmarks(){
+	if [ $kernel == "mkl" ]; then
+		julia=$julia_mkl
+	else
+		julia=$julia_open
+	fi
+	if [ $bench == "nthreads" ] || [ $bench == "matrix" ]; then
+		$julia bench_iter.jl $csv $solver $bench $mat ${size[0]} $kernel \
+			$format $orth $precon $t $nsamples $niter $small_tol
+	elif [ $bench == "size" ]; then
+		$julia bench_iter.jl $csv $solver $bench $mat ${size[0]} ${size[1]} \
+			${size[2]} $kernel $format $orth $precon $t $nsamples $niter $small_tol
+	fi
+}
+
+# Preprocessing
+if [ $bench == "nthreads" ] || [ $bench == "size" ]; then
+	printf "Preprocessing.."
+	
+	# Convergence history
+	t=${nthreads[1]}
+	kernel="hist"
+	format="csr"
+	mat=${matrix[0]}
+	set_nthreads
+	for orth in "${orths[@]}"; do
+		for precon in "${precons[@]}"; do	 	
+		 	csv="${folder}/csv/${kernel}_${orth}_${precon}.csv"
+		 	echo "nrows ncols nnz isconverged iters nrests nprods abstol reltol" >> $csv
+		 	run_benchmarks
+		done
+	done
+
+	# Count flop
+	t=1
+	set_nthreads
+	kernel="flop"
+	format="csr"
+	mat=${matrix[0]}
+	for orth in "${orths[@]}"; do
+		for precon in "${precons[@]}"; do
+			if [ $count_flops == true ]; then
+				csv="${folder}/csv/${kernel}_${orth}_${precon}.csv"
+				echo "nrows ncols nnz flop" >> $csv
+				run_benchmarks
+			fi
+		done
+	done
+
+	echo
+fi
+
+# For preprocessing only
+if [ $nsamples == 0 ]; then
+	exit
+fi
+
+# Run benchmarks
+# Number of threads
+if [ $bench == "nthreads" ]; then
+	mat=${matrix[0]}
+	for kernel in "${kernels[@]}"; do
+		for format in "${formats[@]}"; do
+			if [ $kernel == "par" ] && [ $format == "csc" ]; then
+				break
+			fi
+			for orth in "${orths[@]}"; do
+				for precon in "${precons[@]}"; do
+					echo "${kernel}, ${format}, ${orth}, ${precon}" 
+					csv="${folder}/csv/runtimes_${kernel}_${format}_${orth}_${precon}.csv"
+					csv_solver="${folder}/csv/runtimes-solver_${kernel}_${format}_${orth}_${precon}.csv"
+					echo "nthreads nrows ncols nnz min med mean max" >> $csv_solver
+					if [ $precon != "none" ]; then
+						csv_precon="${folder}/csv/runtimes-precon_${kernel}_${format}_${orth}_${precon}.csv"
+						echo "nthreads nrows ncols nnz min med mean max" >> $csv_precon
+					fi
+					printf "nthreads = "
+					if [ $kernel == "ser" ] && [ $ser_threads == "false" ]; then
+						t=1
+						set_nthreads
+						run_benchmarks
+					else
+						for ((t=${nthreads[0]}; t<=${nthreads[1]}; t+=${nthreads[2]})); do
+							set_nthreads
+							run_benchmarks
+						done
+					fi
+					echo
+				done
+			done
+		done
+	done
+# Matrix size
+elif [ $bench == "size" ]; then
+	mat=${matrix[0]}
+	for kernel in "${kernels[@]}"; do
+		if [ $kernel == "ser" ]; then
+			for format in "${formats[@]}"; do
+				for orth in "${orths[@]}"; do
+					for precon in "${precons[@]}"; do
+						t=1
+						echo "${kernel}, ${format}, ${orth}, ${precon}, ${t}"
+						csv="${folder}/csv/runtimes_${kernel}_${format}_${orth}_${precon}_${t}.csv"
+						set_nthreads
+						run_benchmarks
+					done
+				done
+			done
+		else
+			for format in "${formats[@]}"; do
+				for orth in "${orths[@]}"; do
+					for precon in "${precons[@]}"; do
+						for t in "${nthreads[@]}"; do
+							echo "${kernel}, ${format}, ${orth}, ${precon}, ${t}"
+							csv="${folder}/csv/runtimes_${kernel}_${format}_${orth}_${precon}_${t}.csv"
+							set_nthreads
+							run_benchmarks
+						done
+					done
+				done
+			done
+		fi
+	done
+# Matrix (for MatrixDepot matrices)
+elif [ $bench == "matrix" ]; then
+	for kernel in "${kernels[@]}"; do
+		for format in "${formats[@]}"; do
+			if [ $kernel == "par" ] && [ $format == "csc" ]; then
+				break
+			fi
+			for orth in "${orths[@]}"; do
+				for precon in "${precons[@]}"; do
+					for t in "${nthreads[@]}"; do
+						echo "${kernel}, ${format}, ${orth}, ${precon}, ${t}"
+						csv="${folder}/csv/runtimes_${kernel}_${format}_${orth}_${precon}_${t}.csv"
+						csv_solver="${folder}/csv/runtimes-solver_${kernel}_${format}_${orth}_${precon}_${t}.csv"
+						echo "matrix nrows ncols nnz min med mean max" >> $csv_solver
+						if [ $precon != "none" ]; then
+							csv_precon="${folder}/csv/runtimes-precon_${kernel}_${format}_${orth}_${precon}_${t}.csv"
+							echo "matrix nrows ncols nnz min med mean max" >> $csv_precon
+						fi 
+						printf "matrix = "
+						for mat in "${matrix[@]}"; do
+							printf "${mat}.."
+							set_nthreads
+							run_benchmarks
+						done
+						echo
+					done
+				done
+			done
+		done
+	done
+fi
+
+
+
+# Compute gflops and parallel speedups
+if [ $bench != "matrix" ]; then
+	printf "Postprocessing.."
+	$julia_open post.jl $folder
+	echo
+fi
+
+
+# Plot results
+if [ $bench != "matrix" ]; then
+	printf "Plotting.."
+	$julia_open plot.jl $folder $plotbackend
+	echo
+fi
