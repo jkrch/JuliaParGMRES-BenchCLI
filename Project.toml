@@ -1,6 +1,6 @@
 name = "JuliaParGMRES-BenchCLI"
 uuid = "aa08fbb7-203d-4c93-9aab-967a2085bebd"
-authors = ["Jonas Kreich <j.kreich@tutamail.com>"]
+authors = ["Jonas Kreich"]
 version = "0.1.0"
 
 [deps]
